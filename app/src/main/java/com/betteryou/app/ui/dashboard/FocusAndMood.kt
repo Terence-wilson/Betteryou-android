@@ -35,10 +35,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import com.betteryou.app.domain.Cycle
 import com.betteryou.app.domain.ItemKind
 import com.betteryou.app.domain.MoodEntry
 import com.betteryou.app.domain.TrackedItem
+import com.betteryou.app.domain.today
+import com.betteryou.app.ui.AddResult
 import com.betteryou.app.ui.components.AllFocusPickers
 import com.betteryou.app.ui.components.MoodPicker
 import com.betteryou.app.ui.components.scrollingScreen
@@ -48,7 +52,7 @@ import com.betteryou.app.ui.components.scrollingScreen
 fun FocusEditorScreen(
     cycle: Cycle,
     items: List<TrackedItem>,
-    onAddItem: (String, ItemKind) -> String,
+    onAddItem: (String, ItemKind) -> AddResult,
     onSave: (Set<String>) -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -74,11 +78,18 @@ fun FocusEditorScreen(
     }
 }
 
-/** Quick daily mood log. */
+/** Quick mood log for [day] (today by default). Past entries can also be deleted. */
 @Composable
-fun MoodEntrySheet(existing: MoodEntry?, onSave: (Int, String) -> Unit, onDismiss: () -> Unit) {
+fun MoodEntrySheet(
+    existing: MoodEntry?,
+    onSave: (Int, String) -> Unit,
+    onDismiss: () -> Unit,
+    day: LocalDate = today(),
+    onDelete: (() -> Unit)? = null,
+) {
     var mood by rememberSaveable { mutableIntStateOf(existing?.mood ?: 3) }
     var note by rememberSaveable { mutableStateOf(existing?.note ?: "") }
+    val isToday = day == today()
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -93,8 +104,15 @@ fun MoodEntrySheet(existing: MoodEntry?, onSave: (Int, String) -> Unit, onDismis
                 .padding(bottom = 20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text("Daily Check-in", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text("How are you feeling today?", style = MaterialTheme.typography.titleSmall)
+            Text(
+                if (isToday) "Daily Check-in" else moodDayFormat.format(day),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                if (isToday) "How are you feeling today?" else "How were you feeling?",
+                style = MaterialTheme.typography.titleSmall,
+            )
             MoodPicker(value = mood, onValueChange = { mood = it })
             OutlinedTextField(
                 value = note,
@@ -109,6 +127,13 @@ fun MoodEntrySheet(existing: MoodEntry?, onSave: (Int, String) -> Unit, onDismis
                 OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Cancel") }
                 Button(onClick = { onSave(mood, note) }, modifier = Modifier.weight(1f)) { Text("Save") }
             }
+            if (onDelete != null && existing != null) {
+                TextButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
+                    Text("Delete this entry", color = MaterialTheme.colorScheme.error)
+                }
+            }
         }
     }
 }
+
+private val moodDayFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("EEEE, MMM d")

@@ -38,7 +38,7 @@ fun SettingsScreen(
         Modifier.scrollingScreen(contentPadding),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        ScheduleSettingsSections(settings, onUpdate)
+        ScheduleSettingsSections(settings, onUpdate, activeCycle)
 
         if (activeCycle != null) {
             FormSection(

@@ -10,6 +10,7 @@ import com.betteryou.app.domain.AppSettings
 import com.betteryou.app.domain.CheckIn
 import com.betteryou.app.domain.Cycle
 import com.betteryou.app.domain.FrequencyUnit
+import com.betteryou.app.domain.HabitLog
 import com.betteryou.app.domain.ItemKind
 import com.betteryou.app.domain.ItemRating
 import com.betteryou.app.domain.MoodEntry
@@ -141,6 +142,8 @@ data class ItemRatingEntity(
     val enjoyment: Int?,
     val improvement: Int?,
     val adherence: Int?,
+    val resetDaysKept: Int? = null,
+    val resetDaysTotal: Int? = null,
 ) {
     fun toDomain() = ItemRating(
         itemId = itemId,
@@ -150,6 +153,8 @@ data class ItemRatingEntity(
         enjoyment = enjoyment,
         improvement = improvement,
         adherence = adherence,
+        resetDaysKept = resetDaysKept,
+        resetDaysTotal = resetDaysTotal,
     )
 
     companion object {
@@ -162,6 +167,8 @@ data class ItemRatingEntity(
             enjoyment = rating.enjoyment,
             improvement = rating.improvement,
             adherence = rating.adherence,
+            resetDaysKept = rating.resetDaysKept,
+            resetDaysTotal = rating.resetDaysTotal,
         )
     }
 }
@@ -188,4 +195,13 @@ data class MoodEntity(
     val note: String,
 ) {
     fun toDomain() = MoodEntry(LocalDate.ofEpochDay(epochDay), mood, note)
+}
+
+/** A focused habit checked off on the daily checklist. A row means "kept" for that day. */
+@Entity(tableName = "habit_logs", primaryKeys = ["epochDay", "itemId"])
+data class HabitLogEntity(
+    val epochDay: Long,
+    val itemId: String,
+) {
+    fun toDomain() = HabitLog(LocalDate.ofEpochDay(epochDay), itemId)
 }

@@ -30,6 +30,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -41,17 +42,20 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import com.betteryou.app.domain.ItemKind
 import com.betteryou.app.domain.TrackedItem
+import com.betteryou.app.ui.AddResult
 
-/** Text field with an add button. */
+/** Text field with an add button. [onAdd] returns true when the text was used and the field can be cleared. */
 @Composable
-fun AddItemField(placeholder: String, onAdd: (String) -> Unit, modifier: Modifier = Modifier) {
+fun AddItemField(
+    placeholder: String,
+    onAdd: (String) -> Boolean,
+    modifier: Modifier = Modifier,
+    message: String? = null,
+) {
     var text by rememberSaveable { mutableStateOf("") }
     val trimmed = text.trim()
-    val submit = {
-        if (trimmed.isNotEmpty()) {
-            onAdd(trimmed)
-            text = ""
-        }
+    val submit: () -> Unit = {
+        if (trimmed.isNotEmpty() && onAdd(trimmed)) text = ""
     }
     OutlinedTextField(
         value = text,
@@ -65,6 +69,11 @@ fun AddItemField(placeholder: String, onAdd: (String) -> Unit, modifier: Modifie
                 Icon(Icons.Filled.AddCircle, contentDescription = "Add")
             }
         },
+        supportingText = if (message != null) {
+            { Text(message) }
+        } else {
+            null
+        },
         modifier = modifier.fillMaxWidth(),
     )
 }
@@ -74,12 +83,26 @@ fun AddItemField(placeholder: String, onAdd: (String) -> Unit, modifier: Modifie
 fun ItemEditorSection(
     kind: ItemKind,
     items: List<TrackedItem>,
-    onAdd: (String) -> Unit,
+    onAdd: (String) -> AddResult,
     onRename: (TrackedItem, String) -> Unit,
     onDelete: (TrackedItem) -> Unit,
+    nameConflict: (TrackedItem, String) -> String?,
     showsSuggestions: Boolean = false,
 ) {
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
+    var message by remember { mutableStateOf<String?>(null) }
+    val add: (String) -> Boolean = { name ->
+        when (val result = onAdd(name)) {
+            is AddResult.Added -> {
+                message = null
+                true
+            }
+            is AddResult.AlreadyExists -> {
+                message = "“${result.name}” is already in this list."
+                false
+            }
+        }
+    }
 
     FormSection(title = kind.title, footer = kind.explanation, icon = kind.icon, tint = kind.tint) {
         items.forEach { item ->
@@ -99,7 +122,7 @@ fun ItemEditorSection(
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         }
-        AddItemField(kind.placeholder, onAdd)
+        AddItemField(kind.placeholder, add, message = message)
     }
 
     if (showsSuggestions) {
@@ -112,7 +135,7 @@ fun ItemEditorSection(
                 ) {
                     available.forEach { suggestion ->
                         AssistChip(
-                            onClick = { onAdd(suggestion) },
+                            onClick = { add(suggestion) },
                             label = { Text(suggestion) },
                             leadingIcon = { Icon(Icons.Filled.Add, contentDescription = null) },
                             colors = AssistChipDefaults.assistChipColors(
@@ -132,6 +155,7 @@ fun ItemEditorSection(
     if (editing != null) {
         EditItemDialog(
             item = editing,
+            nameConflict = { nameConflict(editing, it) },
             onSave = { onRename(editing, it); editingId = null },
             onDelete = { onDelete(editing); editingId = null },
             onDismiss = { editingId = null },
@@ -140,8 +164,15 @@ fun ItemEditorSection(
 }
 
 @Composable
-private fun EditItemDialog(item: TrackedItem, onSave: (String) -> Unit, onDelete: () -> Unit, onDismiss: () -> Unit) {
+private fun EditItemDialog(
+    item: TrackedItem,
+    nameConflict: (String) -> String?,
+    onSave: (String) -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
     var name by rememberSaveable(item.id) { mutableStateOf(item.name) }
+    val conflict = nameConflict(name)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Edit") },
@@ -151,11 +182,17 @@ private fun EditItemDialog(item: TrackedItem, onSave: (String) -> Unit, onDelete
                 onValueChange = { name = it },
                 label = { Text("Name") },
                 singleLine = true,
+                isError = conflict != null,
+                supportingText = if (conflict != null) {
+                    { Text("“$conflict” is already in this list.") }
+                } else {
+                    null
+                },
                 modifier = Modifier.fillMaxWidth(),
             )
         },
         confirmButton = {
-            TextButton(onClick = { onSave(name) }, enabled = name.isNotBlank()) { Text("Save") }
+            TextButton(onClick = { onSave(name) }, enabled = name.isNotBlank() && conflict == null) { Text("Save") }
         },
         dismissButton = {
             Row {
@@ -173,11 +210,13 @@ fun FocusPickerSection(
     items: List<TrackedItem>,
     selection: Set<String>,
     onSelectionChange: (Set<String>) -> Unit,
-    onAddItem: (String) -> String,
+    onAddItem: (String) -> AddResult,
 ) {
     val selectedCount = items.count { it.id in selection }
     val limit = kind.focusLimit
     val atLimit = limit != null && selectedCount >= limit
+    var message by remember { mutableStateOf<String?>(null) }
+    val limitHint = "You can focus on up to $limit ${kind.title.lowercase()}. Unselect one first."
 
     FormSection(
         title = kind.title,
@@ -197,15 +236,26 @@ fun FocusPickerSection(
         }
         items.forEach { item ->
             val selected = item.id in selection
-            val enabled = selected || !atLimit
+            val available = selected || !atLimit
             Row(
                 Modifier
                     .fillMaxWidth()
                     .toggleable(
                         value = selected,
-                        enabled = enabled,
                         role = Role.Checkbox,
-                        onValueChange = { on -> onSelectionChange(if (on) selection + item.id else selection - item.id) },
+                        onValueChange = { on ->
+                            when {
+                                !on -> {
+                                    message = null
+                                    onSelectionChange(selection - item.id)
+                                }
+                                atLimit -> message = limitHint
+                                else -> {
+                                    message = null
+                                    onSelectionChange(selection + item.id)
+                                }
+                            }
+                        },
                     )
                     .padding(vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -214,23 +264,37 @@ fun FocusPickerSection(
                     item.name,
                     Modifier.weight(1f),
                     style = MaterialTheme.typography.bodyLarge,
-                    color = if (enabled) Color.Unspecified else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    color = if (available) Color.Unspecified else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                 )
                 Icon(
                     if (selected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
                     contentDescription = null,
                     tint = when {
                         selected -> kind.tint
-                        enabled -> MaterialTheme.colorScheme.onSurfaceVariant
+                        available -> MaterialTheme.colorScheme.onSurfaceVariant
                         else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
                     },
                 )
             }
         }
-        AddItemField(kind.placeholder, onAdd = { name ->
-            val id = onAddItem(name)
-            if (!atLimit) onSelectionChange(selection + id)
-        })
+        AddItemField(
+            kind.placeholder,
+            message = message,
+            onAdd = { name ->
+                val result = onAddItem(name)
+                val alreadySelected = result.id in selection
+                message = when {
+                    alreadySelected -> "“$name” is already selected."
+                    atLimit && result is AddResult.Added ->
+                        "Added “$name” to your list. You're already focusing on $limit — unselect one to focus on it."
+                    atLimit -> "“$name” is already in your list. $limitHint"
+                    result is AddResult.AlreadyExists -> "“${result.name}” was already in your list, so it's now selected."
+                    else -> null
+                }
+                if (!atLimit && !alreadySelected) onSelectionChange(selection + result.id)
+                true
+            },
+        )
     }
 }
 
@@ -240,7 +304,7 @@ fun AllFocusPickers(
     items: List<TrackedItem>,
     selection: Set<String>,
     onSelectionChange: (Set<String>) -> Unit,
-    onAddItem: (String, ItemKind) -> String,
+    onAddItem: (String, ItemKind) -> AddResult,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         ItemKind.entries.forEach { kind ->

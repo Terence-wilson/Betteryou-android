@@ -53,9 +53,27 @@ data class Cycle(
         return (Duration.between(startDate, point).toMillis().toDouble() / total).coerceIn(0.0, 1.0)
     }
 
+    /** Which stretch of the cycle the habit ratings at a check-in done at [now] cover. */
+    fun habitRatingPeriod(now: Instant = Instant.now()): HabitRatingPeriod = when {
+        now < resetEndDate -> HabitRatingPeriod.DURING_RESET
+        hasPostResetPeriod -> HabitRatingPeriod.AFTER_RESET
+        else -> HabitRatingPeriod.WHOLE_CYCLE_RESET
+    }
+
     /** Items of [kind] the user is focusing on this cycle, in list order. */
     fun focused(items: List<TrackedItem>, kind: ItemKind): List<TrackedItem> =
         items.filter { it.kind == kind && it.id in focusItemIds }
+}
+
+enum class HabitRatingPeriod {
+    /** Checking in early, before the reset has ended. */
+    DURING_RESET,
+
+    /** The usual case: rate the stretch between the end of the reset and the check-in. */
+    AFTER_RESET,
+
+    /** The reset lasted the whole cycle (short cycles). */
+    WHOLE_CYCLE_RESET,
 }
 
 /**
@@ -70,6 +88,9 @@ data class ItemRating(
     val enjoyment: Int? = null,
     val improvement: Int? = null,
     val adherence: Int? = null,
+    /** Reset days the habit was checked off on the daily checklist, out of [resetDaysTotal]. */
+    val resetDaysKept: Int? = null,
+    val resetDaysTotal: Int? = null,
 ) {
     /** Mean of the three hobby scores, if present. */
     val hobbyAverage: Double?
@@ -96,12 +117,32 @@ data class MoodEntry(
     val note: String,
 )
 
-/** Hobby scores entered during a check-in. */
+/** Hobby scores entered during a check-in. `null` means the user left it unrated. */
 data class HobbyScores(
-    val consistency: Int = 3,
-    val enjoyment: Int = 3,
-    val improvement: Int = 3,
-)
+    val consistency: Int? = null,
+    val enjoyment: Int? = null,
+    val improvement: Int? = null,
+) {
+    val isEmpty: Boolean get() = consistency == null && enjoyment == null && improvement == null
+}
+
+/** A focused habit checked off on the daily checklist for [day]. */
+data class HabitLog(val day: LocalDate, val itemId: String)
+
+/** How many reset days so far a habit was checked off. */
+data class ResetProgress(val kept: Int, val total: Int)
+
+fun resetProgress(
+    cycle: Cycle,
+    itemId: String,
+    logs: List<HabitLog>,
+    today: LocalDate,
+    zone: ZoneId = ZoneId.systemDefault(),
+): ResetProgress {
+    val days = Schedule.resetDaysSoFar(cycle, today, zone).toSet()
+    val kept = logs.count { it.itemId == itemId && it.day in days }
+    return ResetProgress(kept, days.size)
+}
 
 object MoodScale {
     val emojis = listOf("😞", "🙁", "😐", "🙂", "😄")

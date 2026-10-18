@@ -2,6 +2,8 @@ package com.betteryou.app.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,13 +19,21 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.betteryou.app.domain.MoodScale
 import com.betteryou.app.ui.theme.Orange
+import kotlinx.coroutines.delay
 
 /** Rounded card used throughout the app. */
 @Composable
@@ -107,14 +118,14 @@ fun SwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Uni
     }
 }
 
-/** A value with − and + buttons. */
+/** A value with − and + buttons. Hold a button to keep stepping. */
 @Composable
 fun StepperRow(
     label: String,
     valueText: String,
-    value: Int,
-    range: IntRange,
-    onValueChange: (Int) -> Unit,
+    canDecrease: Boolean,
+    canIncrease: Boolean,
+    onStep: (delta: Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -126,12 +137,41 @@ fun StepperRow(
             Text(label, style = MaterialTheme.typography.bodyLarge)
             Text(valueText, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        FilledTonalIconButton(onClick = { onValueChange(value - 1) }, enabled = value > range.first) {
-            Icon(Icons.Filled.Remove, contentDescription = "Decrease $label")
+        RepeatingIconButton(Icons.Filled.Remove, "Decrease $label", canDecrease) { onStep(-1) }
+        RepeatingIconButton(Icons.Filled.Add, "Increase $label", canIncrease) { onStep(1) }
+    }
+}
+
+@Composable
+private fun RepeatingIconButton(icon: ImageVector, description: String, enabled: Boolean, onStep: () -> Unit) {
+    val currentOnStep by rememberUpdatedState(onStep)
+    val currentEnabled by rememberUpdatedState(enabled)
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    var repeated by remember { mutableStateOf(false) }
+
+    LaunchedEffect(pressed) {
+        if (!pressed) return@LaunchedEffect
+        delay(400)
+        var interval = 150L
+        while (currentEnabled) {
+            repeated = true
+            currentOnStep()
+            delay(interval)
+            interval = maxOf(40L, interval - 15L)
         }
-        FilledTonalIconButton(onClick = { onValueChange(value + 1) }, enabled = value < range.last) {
-            Icon(Icons.Filled.Add, contentDescription = "Increase $label")
-        }
+    }
+
+    FilledTonalIconButton(
+        onClick = {
+            // A hold already stepped; don't add one more on release.
+            if (!repeated) currentOnStep()
+            repeated = false
+        },
+        enabled = enabled,
+        interactionSource = interactionSource,
+    ) {
+        Icon(icon, contentDescription = description)
     }
 }
 
@@ -139,8 +179,8 @@ fun StepperRow(
 @Composable
 fun RatingRow(
     title: String,
-    value: Int,
-    onValueChange: (Int) -> Unit,
+    value: Int?,
+    onValueChange: (Int?) -> Unit,
     modifier: Modifier = Modifier,
     caption: String? = null,
     lowLabel: String = "1",
@@ -148,10 +188,15 @@ fun RatingRow(
     tint: Color = MaterialTheme.colorScheme.primary,
 ) {
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            if (caption != null) {
-                Text(caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(verticalAlignment = Alignment.Top) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                if (caption != null) {
+                    Text(caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            if (value == null) {
+                Text("Not rated", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -159,7 +204,8 @@ fun RatingRow(
                 val selected = score == value
                 Surface(
                     selected = selected,
-                    onClick = { onValueChange(score) },
+                    // Tapping the selected score again clears it.
+                    onClick = { onValueChange(if (selected) null else score) },
                     shape = RoundedCornerShape(10.dp),
                     color = if (selected) tint else MaterialTheme.colorScheme.surfaceVariant,
                     contentColor = if (selected) Color.White else MaterialTheme.colorScheme.onSurface,
@@ -280,3 +326,32 @@ fun EmptyState(title: String, message: String, icon: ImageVector, modifier: Modi
 }
 
 fun dayText(days: Int): String = "$days ${if (days == 1) "day" else "days"}"
+
+/** Yes/no question before an action that can't be undone or that loses work. */
+@Composable
+fun ConfirmDialog(
+    title: String,
+    message: String,
+    confirmLabel: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+    dismissLabel: String = "Cancel",
+    destructive: Boolean = false,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(message) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(
+                    confirmLabel,
+                    color = if (destructive) MaterialTheme.colorScheme.error else Color.Unspecified,
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(dismissLabel) }
+        },
+    )
+}

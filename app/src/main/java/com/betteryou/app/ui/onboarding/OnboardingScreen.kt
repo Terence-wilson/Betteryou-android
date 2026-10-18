@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import com.betteryou.app.domain.AppSettings
 import com.betteryou.app.domain.ItemKind
 import com.betteryou.app.domain.TrackedItem
+import com.betteryou.app.ui.AddResult
 import com.betteryou.app.ui.components.AllFocusPickers
 import com.betteryou.app.ui.components.ItemEditorSection
 import com.betteryou.app.ui.components.scrollingScreen
@@ -68,13 +69,15 @@ fun OnboardingScreen(
     settings: AppSettings,
     items: List<TrackedItem>,
     onUpdateSettings: SettingsUpdater,
-    onAddItem: (String, ItemKind) -> String,
+    onAddItem: (String, ItemKind) -> AddResult,
     onRenameItem: (TrackedItem, String) -> Unit,
     onDeleteItem: (TrackedItem) -> Unit,
+    nameConflict: (TrackedItem, String) -> String?,
     onFinish: (Set<String>) -> Unit,
 ) {
     var stepIndex by rememberSaveable { mutableIntStateOf(0) }
     var focus by rememberSaveable { mutableStateOf(setOf<String>()) }
+    var finishing by rememberSaveable { mutableStateOf(false) }
     val steps = OnboardingStep.entries
     val step = steps[stepIndex]
     val isLastStep = stepIndex == steps.lastIndex
@@ -121,11 +124,13 @@ fun OnboardingScreen(
                                 ) {
                                     requestPermission()
                                 }
+                                finishing = true
                                 onFinish(focus.filter { id -> items.any { it.id == id } }.toSet())
                             } else {
                                 stepIndex++
                             }
                         },
+                        enabled = !finishing,
                         modifier = Modifier.weight(1f).height(52.dp),
                     ) { Text(if (isLastStep) "Start my first cycle" else "Continue") }
                 }
@@ -156,6 +161,7 @@ fun OnboardingScreen(
                             onAdd = { onAddItem(it, editorKind) },
                             onRename = onRenameItem,
                             onDelete = onDeleteItem,
+                            nameConflict = nameConflict,
                             showsSuggestions = true,
                         )
                     }

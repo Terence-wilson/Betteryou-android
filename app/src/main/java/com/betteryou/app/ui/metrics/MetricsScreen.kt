@@ -60,6 +60,7 @@ import com.betteryou.app.ui.theme.Orange
 import com.betteryou.app.ui.theme.Pink
 import com.betteryou.app.ui.theme.Purple
 import com.betteryou.app.ui.theme.Red
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -76,6 +77,10 @@ fun MetricsScreen(
     checkIns: List<CheckIn>,
     moods: List<MoodEntry>,
     items: List<TrackedItem>,
+    onUpdateCheckInNote: (CheckIn, String) -> Unit,
+    onDeleteCheckIn: (CheckIn) -> Unit,
+    onSaveMood: (LocalDate, Int, String) -> Unit,
+    onDeleteMood: (LocalDate) -> Unit,
     contentPadding: PaddingValues,
 ) {
     var tab by rememberSaveable { mutableStateOf(MetricsTab.OVERVIEW) }
@@ -92,7 +97,10 @@ fun MetricsScreen(
         }
 
         when (tab) {
-            MetricsTab.OVERVIEW -> Overview(checkIns, moods)
+            MetricsTab.OVERVIEW -> {
+                Overview(checkIns, moods)
+                CheckInHistoryCard(checkIns, onUpdateCheckInNote, onDeleteCheckIn)
+            }
             MetricsTab.HOBBIES -> {
                 val histories = remember(checkIns, items) { Metrics.histories(checkIns, items, setOf(ItemKind.HOBBY)) }
                 if (histories.isEmpty()) {
@@ -117,7 +125,10 @@ fun MetricsScreen(
                 }
                 histories.forEach { HabitHistoryCard(it) }
             }
-            MetricsTab.MOOD -> MoodSection(moods)
+            MetricsTab.MOOD -> {
+                MoodSection(moods)
+                if (moods.isNotEmpty()) MoodEntriesCard(moods, onSaveMood, onDeleteMood)
+            }
         }
     }
 }
@@ -255,15 +266,26 @@ private fun HabitHistoryCard(history: ItemHistory) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        val lastReset = history.samples.lastOrNull { it.rating.resetDaysTotal != null }?.rating
+        if (lastReset != null) {
+            Text(
+                "Last reset: kept ${lastReset.resetDaysKept ?: 0} of ${lastReset.resetDaysTotal} days",
+                style = MaterialTheme.typography.labelMedium,
+                color = history.kind.tint,
+            )
+        }
         // Show the most recent check-ins so bars stay readable.
         val entries = history.samples.takeLast(10).mapNotNull { sample ->
             sample.rating.adherence?.let { BarEntry(formatShortDate(sample.date), it.toDouble(), history.kind.tint, "$it") }
         }
-        BarChart(entries, maxValue = 5.0, height = 150.dp, description = "${history.name} adherence by check-in")
+        if (entries.isEmpty()) {
+            EmptyChart("Not rated at a check-in yet.")
+        } else {
+            BarChart(entries, maxValue = 5.0, height = 150.dp, description = "${history.name} adherence by check-in")
+        }
     }
 }
 
-private val noteDate = DateTimeFormatter.ofPattern("EEE, MMM d")
 
 @Composable
 private fun MoodSection(moods: List<MoodEntry>) {
@@ -288,7 +310,13 @@ private fun MoodSection(moods: List<MoodEntry>) {
                 Orange,
                 recent.map { ChartPoint(it.day.atStartOfDay(zone).toInstant(), it.mood.toDouble()) },
             )
-            LineChart(listOf(series), yLabel = { MoodScale.emoji(it) }, description = "Mood over the last 30 days")
+            val windowStart = today().minusDays(29).atStartOfDay(zone).toInstant()
+            LineChart(
+                listOf(series),
+                yLabel = { MoodScale.emoji(it) },
+                xRange = windowStart to today().atStartOfDay(zone).toInstant(),
+                description = "Mood over the last 30 days",
+            )
         }
     }
 
@@ -299,25 +327,5 @@ private fun MoodSection(moods: List<MoodEntry>) {
             BarEntry(MoodScale.emoji(index + 1), count.toDouble(), Orange, "$count")
         }
         BarChart(entries, maxValue = (distribution.maxOrNull() ?: 0).toDouble(), description = "Days logged at each mood")
-    }
-
-    val notes = moods.asReversed().filter { it.note.isNotBlank() }.take(5)
-    if (notes.isNotEmpty()) {
-        AppCard {
-            Text("Recent notes", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            notes.forEach { entry ->
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
-                    Text(MoodScale.emoji(entry.mood))
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            noteDate.format(entry.day),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(entry.note, style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-            }
-        }
     }
 }

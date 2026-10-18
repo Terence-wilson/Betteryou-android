@@ -8,37 +8,49 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Autorenew
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.SelfImprovement
 import androidx.compose.material.icons.filled.TaskAlt
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.betteryou.app.domain.Cycle
 import com.betteryou.app.domain.CyclePhase
+import com.betteryou.app.domain.HabitLog
 import com.betteryou.app.domain.ItemKind
 import com.betteryou.app.domain.MoodEntry
 import com.betteryou.app.domain.MoodScale
 import com.betteryou.app.domain.TrackedItem
+import com.betteryou.app.domain.resetProgress
 import com.betteryou.app.ui.components.AppCard
+import com.betteryou.app.ui.components.ConfirmDialog
 import com.betteryou.app.ui.components.CycleProgressBar
 import com.betteryou.app.ui.components.Dot
 import com.betteryou.app.ui.components.EmptyState
@@ -51,11 +63,19 @@ import com.betteryou.app.ui.theme.Orange
 import com.betteryou.app.ui.theme.Pink
 import kotlinx.coroutines.delay
 import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 
-/** The current time, refreshed every minute so phase and countdowns stay accurate. */
+/** The current time, refreshed every minute and whenever the app comes back to the foreground. */
 @Composable
 fun rememberNow(): Instant {
-    val now by produceState(Instant.now()) {
+    var resumes by rememberSaveable { mutableStateOf(0) }
+    LifecycleResumeEffect(Unit) {
+        resumes++
+        onPauseOrDispose { }
+    }
+    val now by produceState(Instant.now(), resumes) {
+        value = Instant.now()
         while (true) {
             delay(60_000)
             value = Instant.now()
@@ -68,12 +88,14 @@ fun rememberNow(): Instant {
 fun DashboardScreen(
     cycle: Cycle?,
     items: List<TrackedItem>,
+    habitLogs: List<HabitLog>,
     dailyCheckInEnabled: Boolean,
     todaysMood: MoodEntry?,
     onStartCheckIn: () -> Unit,
     onEditFocus: () -> Unit,
     onOpenMood: () -> Unit,
     onStartCycle: () -> Unit,
+    onSetHabitKept: (String, Boolean) -> Unit,
     contentPadding: PaddingValues,
 ) {
     val now = rememberNow()
@@ -88,7 +110,10 @@ fun DashboardScreen(
                 Text("Start a cycle")
             }
         } else {
-            ActiveCycleContent(cycle, items, dailyCheckInEnabled, todaysMood, now, onStartCheckIn, onEditFocus, onOpenMood)
+            ActiveCycleContent(
+                cycle, items, habitLogs, dailyCheckInEnabled, todaysMood, now,
+                onStartCheckIn, onEditFocus, onOpenMood, onSetHabitKept,
+            )
         }
     }
 }
@@ -97,32 +122,132 @@ fun DashboardScreen(
 private fun ActiveCycleContent(
     cycle: Cycle,
     items: List<TrackedItem>,
+    habitLogs: List<HabitLog>,
     dailyCheckInEnabled: Boolean,
     todaysMood: MoodEntry?,
     now: Instant,
     onStartCheckIn: () -> Unit,
     onEditFocus: () -> Unit,
     onOpenMood: () -> Unit,
+    onSetHabitKept: (String, Boolean) -> Unit,
 ) {
     val phase = cycle.phase(now)
+    var confirmEarly by rememberSaveable { mutableStateOf(false) }
+
     CycleStatusCard(cycle, phase, now)
 
-    val isDue = phase == CyclePhase.CheckInDue
-    val buttonModifier = Modifier.fillMaxWidth().height(52.dp)
-    val buttonContent: @Composable () -> Unit = {
-        Icon(Icons.Filled.TaskAlt, contentDescription = null)
-        Spacer(Modifier.size(8.dp))
-        Text(if (isDue) "Start your check-in" else "Check in early")
+    if (phase == CyclePhase.CheckInDue) {
+        Button(onClick = onStartCheckIn, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+            Icon(Icons.Filled.TaskAlt, contentDescription = null)
+            Spacer(Modifier.size(8.dp))
+            Text("Start your check-in")
+        }
     }
-    if (isDue) {
-        Button(onClick = onStartCheckIn, modifier = buttonModifier) { buttonContent() }
-    } else {
-        OutlinedButton(onClick = onStartCheckIn, modifier = buttonModifier) { buttonContent() }
-    }
+
+    HabitChecklistCard(
+        cycle, items, habitLogs,
+        day = now.atZone(ZoneId.systemDefault()).toLocalDate(),
+        inReset = phase.isReset,
+        onSetKept = onSetHabitKept,
+    )
 
     if (dailyCheckInEnabled) MoodCard(todaysMood, onOpenMood)
 
     FocusSummaryCard(cycle, items, inReset = phase.isReset, onEdit = onEditFocus)
+
+    if (phase != CyclePhase.CheckInDue) {
+        // Ending a cycle early is a deliberate, secondary action.
+        TextButton(onClick = { confirmEarly = true }, modifier = Modifier.fillMaxWidth()) {
+            Text("Check in early")
+        }
+    }
+
+    if (confirmEarly) {
+        ConfirmDialog(
+            title = "Check in early?",
+            message = "Checking in now ends this cycle " +
+                "${if (phase.isReset) "before your reset is over" else "before ${formatShortDate(cycle.checkInDate)}"} " +
+                "and starts the next one today.",
+            confirmLabel = "Check in now",
+            onConfirm = {
+                confirmEarly = false
+                onStartCheckIn()
+            },
+            onDismiss = { confirmEarly = false },
+        )
+    }
+}
+
+/** Daily tick-off for focused habits. During the reset this is how the reset itself gets tracked. */
+@Composable
+private fun HabitChecklistCard(
+    cycle: Cycle,
+    items: List<TrackedItem>,
+    habitLogs: List<HabitLog>,
+    day: LocalDate,
+    inReset: Boolean,
+    onSetKept: (String, Boolean) -> Unit,
+) {
+    val habits = ItemKind.habitKinds.flatMap { cycle.focused(items, it) }
+    if (habits.isEmpty()) return
+
+    AppCard {
+        Text(
+            if (inReset) "Today's reset checklist" else "Today's checklist",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            if (inReset) {
+                "Check off each habit you kept today. Your reset record is shown at your check-in."
+            } else {
+                "Optional: keep checking off habits to stay on track until your check-in."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        habits.forEachIndexed { index, item ->
+            if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            val kept = habitLogs.any { it.itemId == item.id && it.day == day }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .toggleable(value = kept, role = Role.Checkbox, onValueChange = { onSetKept(item.id, it) })
+                    .padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Icon(
+                    if (kept) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
+                    contentDescription = null,
+                    tint = if (kept) item.kind.tint else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Column(Modifier.weight(1f)) {
+                    Text(item.name, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        checklistPrompt(item.kind),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (inReset) {
+                    val progress = resetProgress(cycle, item.id, habitLogs, day)
+                    Text(
+                        "${progress.kept}/${progress.total}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun checklistPrompt(kind: ItemKind): String = when (kind) {
+    ItemKind.GOOD_HABIT -> "Did it today"
+    ItemKind.BAD_HABIT -> "Stayed away today"
+    ItemKind.BREAK_ACTIVITY -> "Kept my break today"
+    ItemKind.HOBBY -> "Practiced today"
 }
 
 @Composable

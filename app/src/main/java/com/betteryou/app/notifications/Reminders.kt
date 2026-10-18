@@ -71,10 +71,29 @@ object Reminders {
         if (!enabled || cycle == null || cycle.completedAt != null) return
 
         val now = Instant.now()
-        if (cycle.checkInDate > now) schedule(context, Kind.CHECK_IN, cycle.checkInDate)
-        if (cycle.hasPostResetPeriod && cycle.resetEndDate > now) {
-            schedule(context, Kind.RESET_END, cycle.resetEndDate)
-        }
+        val checkInAt = Schedule.reminderTime(cycle.checkInDate)
+        if (checkInAt > now) schedule(context, Kind.CHECK_IN, checkInAt)
+        val resetEndAt = Schedule.reminderTime(cycle.resetEndDate)
+        if (cycle.hasPostResetPeriod && resetEndAt > now) schedule(context, Kind.RESET_END, resetEndAt)
+    }
+
+    /** Removes check-in and reset notifications that are still showing once a check-in is done. */
+    fun clearCycleNotifications(context: Context) {
+        val manager = NotificationManagerCompat.from(context)
+        manager.cancel(Kind.CHECK_IN.requestCode)
+        manager.cancel(Kind.RESET_END.requestCode)
+    }
+
+    fun clearDailyNotification(context: Context) {
+        NotificationManagerCompat.from(context).cancel(Kind.DAILY.requestCode)
+    }
+
+    /** True when the app may post notifications (permission granted and not blocked in system settings). */
+    fun notificationsAllowed(context: Context): Boolean {
+        val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        return granted && NotificationManagerCompat.from(context).areNotificationsEnabled()
     }
 
     fun scheduleDailyReminder(context: Context, settings: AppSettings) {
@@ -120,10 +139,7 @@ object Reminders {
     }
 
     fun show(context: Context, kind: Kind) {
-        val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-            PackageManager.PERMISSION_GRANTED
-        if (!granted) return
+        if (!notificationsAllowed(context)) return
 
         val open = Intent(context, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)

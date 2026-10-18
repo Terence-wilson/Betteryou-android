@@ -50,6 +50,8 @@ fun LineChart(
     series: List<ChartSeries>,
     modifier: Modifier = Modifier,
     yRange: IntRange = 1..5,
+    /** Fixed time window for the x-axis; defaults to the span of the data. */
+    xRange: Pair<Instant, Instant>? = null,
     height: Dp = 200.dp,
     yLabel: (Int) -> String = { it.toString() },
     showLegend: Boolean = series.size > 1,
@@ -57,8 +59,8 @@ fun LineChart(
 ) {
     val allX = series.flatMap { s -> s.points.map { it.x.toEpochMilli() } }
     if (allX.isEmpty()) return
-    val minX = allX.min()
-    val maxX = allX.max()
+    val minX = xRange?.first?.toEpochMilli() ?: allX.min()
+    val maxX = xRange?.second?.toEpochMilli() ?: allX.max()
 
     val textMeasurer = rememberTextMeasurer()
     val labelStyle = MaterialTheme.typography.labelSmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)

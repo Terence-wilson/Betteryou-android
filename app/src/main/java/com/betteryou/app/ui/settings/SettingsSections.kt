@@ -3,8 +3,11 @@
 package com.betteryou.app.ui.settings
 
 import android.Manifest
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.provider.Settings
 import android.text.format.DateFormat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -36,7 +39,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.betteryou.app.domain.AppSettings
+import com.betteryou.app.domain.Cycle
+import com.betteryou.app.domain.CyclePhase
 import com.betteryou.app.domain.FrequencyUnit
 import com.betteryou.app.domain.Schedule
 import com.betteryou.app.ui.components.FormSection
@@ -44,7 +50,9 @@ import com.betteryou.app.ui.components.LabeledRow
 import com.betteryou.app.ui.components.StepperRow
 import com.betteryou.app.ui.components.SwitchRow
 import com.betteryou.app.ui.components.dayText
+import com.betteryou.app.notifications.Reminders
 import com.betteryou.app.ui.theme.Orange
+import java.time.Instant
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
@@ -70,7 +78,7 @@ fun rememberNotificationPermissionRequester(): () -> Unit {
 
 /** Check-in frequency and reset length controls. Shared by onboarding and Settings. */
 @Composable
-fun ScheduleSettingsSections(settings: AppSettings, onUpdate: SettingsUpdater) {
+fun ScheduleSettingsSections(settings: AppSettings, onUpdate: SettingsUpdater, activeCycle: Cycle? = null) {
     val cycleDays = maxOf(1, settings.frequency.lengthInDays())
     val defaultReset = Schedule.defaultResetDays(cycleDays)
     val effectiveReset = Schedule.resetDays(cycleDays, settings.customResetDays)
@@ -83,14 +91,16 @@ fun ScheduleSettingsSections(settings: AppSettings, onUpdate: SettingsUpdater) {
         StepperRow(
             label = "Check in every",
             valueText = settings.frequency.displayText,
-            value = settings.frequencyValue,
-            range = 1..365,
-            onValueChange = { value -> onUpdate { it.copy(frequencyValue = value.coerceIn(1, 365)) } },
+            canDecrease = settings.frequencyValue > 1,
+            canIncrease = settings.frequencyValue < settings.frequencyUnit.maxValue,
+            // Relative steps are applied to the stored value, so holding the button never uses a stale one.
+            onStep = { delta -> onUpdate { it.copy(frequencyValue = it.frequencyValue + delta) } },
         )
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
             FrequencyUnit.entries.forEachIndexed { index, unit ->
                 SegmentedButton(
                     selected = settings.frequencyUnit == unit,
+                    // The value is clamped to the new unit's range when it's saved.
                     onClick = { onUpdate { it.copy(frequencyUnit = unit) } },
                     shape = SegmentedButtonDefaults.itemShape(index, FrequencyUnit.entries.size),
                 ) {
@@ -98,16 +108,17 @@ fun ScheduleSettingsSections(settings: AppSettings, onUpdate: SettingsUpdater) {
                 }
             }
         }
+        if (activeCycle != null && activeCycle.phase(Instant.now()) == CyclePhase.CheckInDue) {
+            WarningRow(
+                "With this schedule your current cycle is already over, so your check-in is due now. " +
+                    "Complete it from the Today tab, or pick a longer schedule.",
+            )
+        }
         if (settings.frequency.isLongerThanAMonth) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
-                Icon(Icons.Filled.Warning, contentDescription = null, tint = Orange)
-                Text(
-                    "Check-ins more than a month apart won't be very effective. " +
-                        "Consider a shorter cycle so you can adjust your focus more often.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Orange,
-                )
-            }
+            WarningRow(
+                "Check-ins more than a month apart won't be very effective. " +
+                    "Consider a shorter cycle so you can adjust your focus more often.",
+            )
         }
     }
 
@@ -129,9 +140,14 @@ fun ScheduleSettingsSections(settings: AppSettings, onUpdate: SettingsUpdater) {
             StepperRow(
                 label = "Reset lasts",
                 valueText = dayText(effectiveReset),
-                value = effectiveReset,
-                range = 1..cycleDays,
-                onValueChange = { value -> onUpdate { it.copy(customResetDays = value.coerceIn(1, cycleDays)) } },
+                canDecrease = effectiveReset > 1,
+                canIncrease = effectiveReset < cycleDays,
+                onStep = { delta ->
+                    onUpdate {
+                        val current = Schedule.resetDays(cycleDays, it.customResetDays)
+                        it.copy(customResetDays = (current + delta).coerceIn(1, cycleDays))
+                    }
+                },
             )
         } else {
             LabeledRow("Reset lasts", dayText(defaultReset))
@@ -142,13 +158,22 @@ fun ScheduleSettingsSections(settings: AppSettings, onUpdate: SettingsUpdater) {
 /** Notification and daily check-in controls. Shared by onboarding and Settings. */
 @Composable
 fun NotificationSettingsSections(settings: AppSettings, onUpdate: SettingsUpdater) {
+    val context = LocalContext.current
     val requestPermission = rememberNotificationPermissionRequester()
     var showTimePicker by rememberSaveable { mutableStateOf(false) }
 
+    val allowed = rememberNotificationsAllowed()
+    val wantsNotifications = settings.checkInRemindersEnabled ||
+        (settings.dailyCheckInEnabled && settings.dailyReminderEnabled)
+
     FormSection(
         title = "Notifications",
-        footer = "Get a notification when your check-in is due and when your reset period ends.",
+        footer = "Get a notification on the morning your check-in is due and when your reset period ends.",
     ) {
+        if (wantsNotifications && !allowed) {
+            WarningRow("Notifications are turned off for BetterYou, so you won't get these reminders.")
+            TextButton(onClick = { openNotificationSettings(context) }) { Text("Turn on in system settings") }
+        }
         SwitchRow(
             label = "Check-in reminders",
             checked = settings.checkInRemindersEnabled,
@@ -226,4 +251,31 @@ private fun TimePickerDialog(hour: Int, minute: Int, onConfirm: (Int, Int) -> Un
         confirmButton = { TextButton(onClick = { onConfirm(state.hour, state.minute) }) { Text("OK") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+@Composable
+private fun WarningRow(text: String) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+        Icon(Icons.Filled.Warning, contentDescription = null, tint = Orange)
+        Text(text, style = MaterialTheme.typography.bodyMedium, color = Orange)
+    }
+}
+
+/** Whether notifications can be shown, re-checked whenever the app comes back to the foreground. */
+@Composable
+fun rememberNotificationsAllowed(): Boolean {
+    val context = LocalContext.current
+    var allowed by remember { mutableStateOf(Reminders.notificationsAllowed(context)) }
+    LifecycleResumeEffect(context) {
+        allowed = Reminders.notificationsAllowed(context)
+        onPauseOrDispose { }
+    }
+    return allowed
+}
+
+private fun openNotificationSettings(context: Context) {
+    val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+        .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    context.startActivity(intent)
 }
