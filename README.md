@@ -18,12 +18,15 @@ Every push runs the unit tests and builds a debug APK on GitHub Actions; the APK
 
 ### Cycles, resets and check-ins
 
-- **Check-in frequency** — any number of days, weeks or months. Anything longer than a month shows a warning that check-ins that far apart aren't very effective.
+- **Check-in frequency** — up to 365 days, 52 weeks or 12 months. Anything longer than a month shows a warning that check-ins that far apart aren't very effective.
 - **Reset period** — the start of every cycle. By default it is **1/4 of the cycle**, unless the cycle is **shorter than 7 days**, in which case the reset lasts the **whole cycle**. You can set a custom length in Settings.
-- **During the reset** the goal is to stop bad habits and break activities entirely, and do good habits every day.
+- **Cycles run by calendar day.** A cycle starts on the day you complete your check-in (or finish setup), so the schedule doesn't depend on the time of day you checked in.
+- **During the reset** the goal is to stop bad habits and break activities entirely, and do good habits every day. The Today tab has a **daily checklist** for your focused habits; ticking them off during the reset records how many reset days you kept each one, which you'll see at your check-in.
 - **At the check-in** you:
   1. Rate each focused hobby from 1–5 on **consistency**, **enjoyment** and **improvement**.
-  2. Rate how well you followed each focused good habit, bad habit and break **after the reset period and before the check-in** (or during the cycle, if the whole cycle was a reset).
+  2. Rate how well you followed each focused good habit, bad habit and break **after the reset period and before the check-in** (during the reset if you check in early, or during the cycle if the whole cycle was a reset).
+
+  Ratings start blank and only the ones you give are saved, so skipped items don't skew your progress. Checking in before the cycle ends asks for confirmation first.
   3. Keep your current focus or pick new ones for the next cycle, then the next cycle starts.
 
 ### Lists
@@ -37,9 +40,11 @@ A quick daily mood log (1–5 with an optional note), with an optional daily not
 
 ### Notifications
 
-- Check-in due reminder.
-- "Reset complete" reminder when the reset ends.
-- Optional daily mood reminder.
+- Check-in due reminder, at 9am on the day it's due.
+- "Reset complete" reminder, at 9am on the day the reset ends.
+- Optional daily mood reminder, skipped on days you've already logged your mood.
+
+The app asks for notification permission when you finish setup, and Settings shows a warning with a shortcut if notifications are turned off.
 
 Tapping a notification opens the check-in or daily mood screen. Reminders are restored after a reboot. On Android 13+ the app asks for notification permission when you turn reminders on.
 
@@ -51,7 +56,9 @@ The **Progress** tab shows:
 - Check-in score trends over time.
 - Per-hobby charts of consistency, enjoyment and improvement.
 - Per-habit adherence charts.
-- Mood over the last 30 days, mood distribution and recent notes.
+- Past check-ins with their ratings and reflections (notes can be edited, check-ins deleted).
+- Each habit's reset record from the daily checklist.
+- Mood over the last 30 days, mood distribution, and every mood entry (tap one to edit or delete it).
 
 ## Project layout
 
